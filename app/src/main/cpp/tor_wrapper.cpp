@@ -1,10 +1,12 @@
 #include <jni.h>
 #include <string>
+#include <string.h>
 #include <unistd.h>
 #include <android/log.h>
 #include <sys/wait.h>
 #include <fcntl.h>
 #include <vector>
+#include <errno.h>
 
 #define LOG_TAG "TorWrapper"
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
@@ -201,27 +203,71 @@ Java_com_example_helloworld_TorProcessManager_startTorNative(
     logToJava(log_msg);
     LOGD("Tor iniciado con PID: %d", pid);
     
-    // Esperar un poco y verificar si el proceso sigue vivo
-    usleep(500000); // Esperar 500ms
+    // Hacer el extremo de lectura no bloqueante
+    flags = fcntl(pipefd[0], F_GETFL, 0);
+    fcntl(pipefd[0], F_SETFL, flags | O_NONBLOCK);
     
+    // Leer salida inmediatamente durante 2 segundos para capturar errores iniciales
+    logToJava("[C++] 📖 Leyendo salida inicial de Tor...");
+    char early_output[4096];
+    int total_read = 0;
+    
+    for (int i = 0; i < 20; i++) { // 20 iteraciones x 100ms = 2 segundos
+        usleep(100000); // 100ms
+        
+        ssize_t bytes = read(pipefd[0], early_output + total_read, sizeof(early_output) - total_read - 1);
+        if (bytes > 0) {
+            total_read += bytes;
+        }
+        
+        // Verificar si el proceso terminó
+        int status;
+        pid_t result = waitpid(pid, &status, WNOHANG);
+        
+        if (result == pid) {
+            // Proceso terminó
+            if (WIFEXITED(status)) {
+                snprintf(log_msg, sizeof(log_msg), "[C++] ❌ Proceso terminó con código: %d", WEXITSTATUS(status));
+                logToJava(log_msg);
+            } else if (WIFSIGNALED(status)) {
+                snprintf(log_msg, sizeof(log_msg), "[C++] ❌ Proceso terminado por señal: %d", WTERMSIG(status));
+                logToJava(log_msg);
+            }
+            
+            // Intentar leer cualquier salida restante
+            while ((bytes = read(pipefd[0], early_output + total_read, sizeof(early_output) - total_read - 1)) > 0) {
+                total_read += bytes;
+            }
+            
+            break;
+        }
+    }
+    
+    // Mostrar la salida capturada
+    if (total_read > 0) {
+        early_output[total_read] = '\0';
+        logToJava("[C++] 📄 Salida de Tor:");
+        
+        // Dividir en líneas y enviar
+        char* line = strtok(early_output, "\n");
+        while (line != NULL) {
+            snprintf(log_msg, sizeof(log_msg), "[Tor] %s", line);
+            logToJava(log_msg);
+            line = strtok(NULL, "\n");
+        }
+    } else {
+        logToJava("[C++] ⚠️ No se capturó ninguna salida de Tor");
+    }
+    
+    // Verificar estado final
     int status;
     pid_t result = waitpid(pid, &status, WNOHANG);
     
     if (result == 0) {
-        // Proceso sigue vivo
-        logToJava("[C++] ✅ Proceso sigue activo después de 500ms");
+        logToJava("[C++] ✅ Proceso sigue activo");
     } else if (result == pid) {
-        // Proceso terminó
-        if (WIFEXITED(status)) {
-            snprintf(log_msg, sizeof(log_msg), "[C++] ❌ Proceso terminó con código: %d", WEXITSTATUS(status));
-            logToJava(log_msg);
-        } else if (WIFSIGNALED(status)) {
-            snprintf(log_msg, sizeof(log_msg), "[C++] ❌ Proceso terminado por señal: %d", WTERMSIG(status));
-            logToJava(log_msg);
-        }
-    } else {
-        snprintf(log_msg, sizeof(log_msg), "[C++] ⚠️ Error en waitpid: %s", strerror(errno));
-        logToJava(log_msg);
+        logToJava("[C++] ❌ Proceso ya terminó, no continuará");
+        tor_pid = -1;
     }
     
     env->ReleaseStringUTFChars(torPath, tor_path);
