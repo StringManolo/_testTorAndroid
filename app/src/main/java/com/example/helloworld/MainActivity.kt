@@ -10,22 +10,23 @@ import android.widget.Toast
 import android.widget.ScrollView
 import android.graphics.Typeface
 import android.util.Log
+import android.text.method.ScrollingMovementMethod
 
 class MainActivity : AppCompatActivity() {
-    
+
     private lateinit var torManager: TorProcessManager
     private lateinit var webView: WebView
     private lateinit var logTextView: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
+
         torManager = TorProcessManager(this)
-        
+
         // 1. Crear el TextView para logs
         logTextView = TextView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 
+                ViewGroup.LayoutParams.MATCH_PARENT,
                 0, // 0 height initially
                 0.2f // Peso para ocupar el 20% de la pantalla
             )
@@ -33,23 +34,28 @@ class MainActivity : AppCompatActivity() {
             textSize = 10f
             setBackgroundColor(0xFF000000.toInt()) // Fondo negro
             setTextColor(0xFF00FF00.toInt()) // Texto verde
+            
+            // *** AÑADIR ESTAS LÍNEAS PARA HACERLO SELECCIONABLE ***
+            setTextIsSelectable(true) // Permite seleccionar el texto
+            movementMethod = ScrollingMovementMethod() // Permite scroll
+            setPadding(8, 8, 8, 8) // Padding para mejor legibilidad
         }
-        
+
         // 2. Crear el WebView
         webView = WebView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 
-                0, 
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
                 0.8f // Peso para ocupar el 80% de la pantalla
             )
-            settings.javaScriptEnabled = true 
+            settings.javaScriptEnabled = true
         }
 
         // 3. Usar ScrollView para que el logTextView pueda desplazarse
         val scrollView = ScrollView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 
-                0, 
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
                 0.2f
             )
             addView(logTextView)
@@ -59,7 +65,7 @@ class MainActivity : AppCompatActivity() {
         val mainLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 
+                ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
             addView(scrollView) // Primero el log
@@ -67,7 +73,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         setContentView(mainLayout)
-        
+
         Toast.makeText(this, "Iniciando Tor...", Toast.LENGTH_LONG).show()
 
         Thread {
@@ -94,20 +100,20 @@ class MainActivity : AppCompatActivity() {
             }
         }.start()
     }
-    
+
     private fun updateLog(line: String) {
         logTextView.append(line + "\n")
         // Scroll automático hacia abajo
         (logTextView.parent as? ScrollView)?.fullScroll(ScrollView.FOCUS_DOWN)
     }
-    
+
     private fun setupWebViewAndLoadUrl() {
         // Ocultar el log o reducir su tamaño una vez que Tor esté listo (opcional)
         logTextView.layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, 
+            ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT // Cambiar a WRAP_CONTENT para minimizarlo
         )
-        
+
         webView.webViewClient = TorWebViewClient("127.0.0.1", torManager.torSocksPort)
         webView.loadUrl("https://check.torproject.org/")
     }
