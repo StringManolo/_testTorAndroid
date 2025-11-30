@@ -5,12 +5,11 @@ import android.webkit.WebView
 import androidx.appcompat.app.AppCompatActivity
 import android.widget.LinearLayout
 import android.view.ViewGroup
-import android.widget.TextView
+import android.widget.EditText
 import android.widget.Toast
 import android.widget.ScrollView
 import android.graphics.Typeface
 import android.util.Log
-import android.widget.EditText
 
 class MainActivity : AppCompatActivity() {
 
@@ -23,23 +22,27 @@ class MainActivity : AppCompatActivity() {
 
         torManager = TorProcessManager(this)
 
-).apply {
+        // 1. Crear el EditText para logs (editable = seleccionable)
+        logTextView = EditText(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                0, // 0 height initially
-                0.2f // Peso para ocupar el 20% de la pantalla
+                0,
+                0.2f
             )
             typeface = Typeface.MONOSPACE
             textSize = 10f
-            setBackgroundColor(0xFF000000.toInt()) // Fondo negro
-            setTextColor(0xFF00FF00.toInt()) // Texto verde
+            setBackgroundColor(0xFF000000.toInt())
+            setTextColor(0xFF00FF00.toInt())
             
-            // *** HACER EL TEXTVIEW EDITABLE PARA PODER SELECCIONAR TODO ***
+            // Configurar como área de texto de solo lectura pero seleccionable
             isFocusable = true
             isFocusableInTouchMode = true
             isClickable = true
             isLongClickable = true
-            setPadding(8, 8, 8, 8) // Padding para mejor legibilidad
+            setPadding(8, 8, 8, 8)
+            
+            // Desactivar el teclado pero mantener la selección
+            showSoftInputOnFocus = false
         }
 
         // 2. Crear el WebView
