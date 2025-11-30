@@ -27,10 +27,11 @@ class TorProcessManager(private val context: Context) {
         
         onLog("📦 Nombre del binario en assets: $binaryName")
         
-        // Archivo destino en el directorio de archivos de la app
-        val torExecutable = File(context.filesDir, "tor")
+        // Usar codeCacheDir en lugar de filesDir para evitar problemas con SELinux
+        val torExecutable = File(context.codeCacheDir, "tor")
         
         onLog("🎯 Ruta de destino: ${torExecutable.absolutePath}")
+        onLog("💡 Usando codeCacheDir para compatibilidad con SELinux")
         
         // Verificar si ya existe y es válido
         if (torExecutable.exists()) {
