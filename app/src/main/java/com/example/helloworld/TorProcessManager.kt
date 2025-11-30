@@ -12,6 +12,15 @@ class TorProcessManager(private val context: Context) {
     
     val torSocksPort = 9050
     val torControlPort = 9051
+    
+    // --- NUEVO Directorio de Ejecución (Para evitar restricciones SElinux) ---
+    private fun getExecDir(): File {
+        val execDir = File(context.filesDir, "exec")
+        if (!execDir.exists()) {
+            execDir.mkdirs()
+        }
+        return execDir
+    }
 
     fun ensureBinaryExtracted() {
         val torExecutable = getTorExecutableFile()
@@ -22,12 +31,18 @@ class TorProcessManager(private val context: Context) {
             val assetPath = "tor_bin/$abi/tor" 
             
             context.assets.open(assetPath).use { inputStream ->
+                // COPIAR AL NUEVO DIRECTORIO 'exec'
                 FileOutputStream(torExecutable).use { outputStream ->
                     inputStream.copyTo(outputStream)
                 }
             }
-            torExecutable.setExecutable(true)
-            Log.d("TorProcessManager", "Tor binario extraído a ${torExecutable.absolutePath}")
+            // Asegurar que sea ejecutable para el sistema de archivos
+            torExecutable.setExecutable(true, false) // <-- Usar 'setExecutable(true, false)'
+            
+            // Opcional: Intento de cambiar permisos a 700 (lectura/escritura/ejecución para el dueño)
+            Runtime.getRuntime().exec("chmod 700 ${torExecutable.absolutePath}").waitFor()
+            
+            Log.d("TorProcessManager", "Tor binario extraído y permisos aplicados en ${torExecutable.absolutePath}")
             
         } catch (e: IOException) {
             Log.e("TorProcessManager", "Fallo al extraer binario de Tor", e)
@@ -39,6 +54,11 @@ class TorProcessManager(private val context: Context) {
         
         val torExecutable = getTorExecutableFile()
         val torDataDir = getTorDataDir()
+        
+        if (!torExecutable.exists() || !torExecutable.canExecute()) {
+            onLog("Error crítico: El binario de Tor no existe o no tiene permisos de ejecución.")
+            return
+        }
         
         if (!torDataDir.exists()) torDataDir.mkdirs()
 
@@ -66,10 +86,8 @@ class TorProcessManager(private val context: Context) {
                 
                 try {
                     reader.forEachLine { line ->
-                        // 1. Ejecuta el callback para actualizar la UI
                         onLog(line)
                         
-                        // 2. Continúa con la lógica de detección de listo
                         if (line.contains("Bootstrapped 100%") && !isReady) {
                             isReady = true
                             Log.d("TorProcess", "Tor está listo y Bootstrapped")
@@ -96,7 +114,8 @@ class TorProcessManager(private val context: Context) {
     }
     
     private fun getTorExecutableFile(): File {
-        return File(context.filesDir, "tor")
+        // --- CAMBIO CLAVE: USAR EL DIRECTORIO 'exec' ---
+        return File(getExecDir(), "tor") 
     }
     
     private fun getTorDataDir(): File {
