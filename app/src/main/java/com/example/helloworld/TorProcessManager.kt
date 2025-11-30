@@ -3,8 +3,6 @@ package com.example.helloworld
 import android.content.Context
 import android.util.Log
 import java.io.File
-import java.io.FileOutputStream
-import java.io.IOException
 
 class TorProcessManager(private val context: Context) {
     
@@ -13,91 +11,33 @@ class TorProcessManager(private val context: Context) {
     val torSocksPort = 9050
     val torControlPort = 9051
     
-    private fun getExecDir(): File {
-        val execDir = File(context.filesDir, "exec")
-        if (!execDir.exists()) {
-            execDir.mkdirs()
-        }
-        return execDir
-    }
-
+    // --- NUEVO: OBTENER RUTA DEL BINARIO INSTALADO POR EL SISTEMA ---
     private fun getTorExecutableFile(): File {
-        return File(getExecDir(), "tor") 
+        // La ruta base donde Android copia los archivos de jniLibs
+        val libDir = context.applicationInfo.nativeLibraryDir
+        // El binario debe estar aquí bajo el nombre 'tor'
+        return File(libDir, "tor") 
     }
     
     private fun getTorDataDir(): File {
-        return File(context.filesDir, "tor_data")
+        // El DataDir aún puede estar en filesDir
+        val dataDir = File(context.filesDir, "tor_data")
+        if (!dataDir.exists()) dataDir.mkdirs()
+        return dataDir
     }
 
-    private fun executeShellCommand(command: String, onLog: (String) -> Unit): Boolean {
-        try {
-            val process = Runtime.getRuntime().exec(command)
-            
-            // Consumir STDOUT
-            process.inputStream.bufferedReader().useLines { lines -> 
-                lines.forEach { onLog("SH OUT: $it") } 
-            }
-            // Consumir STDERR
-            process.errorStream.bufferedReader().useLines { lines -> 
-                lines.forEach { onLog("SH ERR: $it") } 
-            }
-            
-            val exitCode = process.waitFor()
-            onLog("Comando '$command' finalizado con código: $exitCode")
-            return exitCode == 0
-        } catch (e: Exception) {
-            onLog("Excepción al ejecutar shell: ${e.message}")
-            return false
-        }
-    }
+    // Ya NO necesitamos ensureBinaryExtracted ni chmod
+    // La instalación lo maneja automáticamente.
 
-    fun ensureBinaryExtracted(onLog: (String) -> Unit) {
-        val torExecutable = getTorExecutableFile()
-        
-        // 1. Verificar si existe y tiene permisos básicos
-        if (torExecutable.exists() && torExecutable.canExecute()) return
-
-        try {
-            val abi = android.os.Build.SUPPORTED_ABIS[0]
-            val assetPath = "tor_bin/$abi/tor" 
-            
-            onLog("Extrayendo binario Tor para $abi...")
-            
-            context.assets.open(assetPath).use { inputStream ->
-                FileOutputStream(torExecutable).use { outputStream ->
-                    inputStream.copyTo(outputStream)
-                }
-            }
-            
-            // 2. Intentar establecer permisos de ejecución (rwx para el dueño)
-            torExecutable.setExecutable(true, false) 
-            
-            // 3. Ejecutar CHMOD explícitamente como contingencia de SELinux
-            val chmodSuccess = executeShellCommand("chmod 700 ${torExecutable.absolutePath}", onLog)
-            
-            if (!chmodSuccess || !torExecutable.canExecute()) {
-                onLog("ADVERTENCIA: Fallo al aplicar permisos de ejecución (chmod). Esto podría causar Error=13.")
-            } else {
-                onLog("Extracción y permisos OK. Listo para ejecutar.")
-            }
-            
-        } catch (e: IOException) {
-            onLog("Fallo crítico al extraer binario de Tor: ${e.message}")
-        }
-    }
-    
     fun startTor(onLog: (String) -> Unit, onReady: () -> Unit) {
-        ensureBinaryExtracted(onLog)
         
         val torExecutable = getTorExecutableFile()
         val torDataDir = getTorDataDir()
         
-        if (!torExecutable.exists() || !torExecutable.canExecute()) {
-            onLog("Error crítico: El binario de Tor no existe o no tiene permisos de ejecución.")
+        if (!torExecutable.exists()) {
+            onLog("Error crítico: Binario 'tor' no encontrado en el directorio de librerías nativas: ${torExecutable.absolutePath}")
             return
         }
-        
-        if (!torDataDir.exists()) torDataDir.mkdirs()
 
         val command = listOf(
             torExecutable.absolutePath,
@@ -107,13 +47,16 @@ class TorProcessManager(private val context: Context) {
             "__DisablePredictedCircuits", "1"
         )
         
+        onLog("Ruta de Ejecución: ${torExecutable.absolutePath}")
+        
         try {
             val processBuilder = ProcessBuilder(command)
                 .redirectErrorStream(true)
             
             torProcess = processBuilder.start()
-            onLog("Proceso Tor iniciado. PID: ${torProcess.hashCode()}")
+            onLog("Proceso Tor iniciado.")
             
+            // ... (Resto del hilo de lectura de logs, sin cambios)
             Thread {
                 var isReady = false
                 val reader = torProcess?.inputStream?.bufferedReader()
@@ -136,7 +79,7 @@ class TorProcessManager(private val context: Context) {
             }.start()
             
         } catch (e: Exception) {
-            onLog("Excepción al iniciar el binario: ${e.message}. El kernel denegó la ejecución (SELinux/noexec).")
+            onLog("Excepción al iniciar Tor. Fallo grave en el entorno: ${e.message}")
         }
     }
     
