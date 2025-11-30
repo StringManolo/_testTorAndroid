@@ -27,54 +27,150 @@ class TorProcessManager(private val context: Context) {
         
         onLog("📦 Nombre del binario en assets: $binaryName")
         
-        // Usar codeCacheDir en lugar de filesDir para evitar problemas con SELinux
-        val torExecutable = File(context.codeCacheDir, "tor")
+        // Intentar múltiples ubicaciones para encontrar una que funcione con SELinux
+        val possibleLocations = listOf(
+            Pair("codeCacheDir", File(context.codeCacheDir, "tor")),
+            Pair("cacheDir", File(context.cacheDir, "tor")),
+            Pair("filesDir", File(context.filesDir, "tor")),
+            Pair("noBackupFilesDir", File(context.noBackupFilesDir, "tor")),
+            Pair("dataDir", File(context.applicationInfo.dataDir, "tor"))
+        )
         
-        onLog("🎯 Ruta de destino: ${torExecutable.absolutePath}")
-        onLog("💡 Usando codeCacheDir para compatibilidad con SELinux")
+        onLog("🔍 Probando múltiples ubicaciones para el binario...")
         
-        // Verificar si ya existe y es válido
-        if (torExecutable.exists()) {
-            onLog("📄 Binario ya existe, tamaño: ${torExecutable.length()} bytes")
-            if (torExecutable.length() > 0) {
-                onLog("✅ Usando binario existente")
-                return torExecutable
-            } else {
-                onLog("⚠️ Binario existente está vacío, reextrayendo...")
-                torExecutable.delete()
-            }
-        }
+        var successfulLocation: File? = null
         
-        // Extraer desde assets
-        try {
-            onLog("📂 Listando archivos en assets/:")
-            val assetsList = context.assets.list("") ?: emptyArray()
-            assetsList.forEach { asset ->
-                onLog("  📄 $asset")
-            }
+        for ((locationName, torExecutable) in possibleLocations) {
+            onLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            onLog("🧪 Probando ubicación: $locationName")
+            onLog("📍 Ruta: ${torExecutable.absolutePath}")
             
-            onLog("🔄 Copiando $binaryName desde assets...")
-            
-            context.assets.open(binaryName).use { input ->
-                torExecutable.outputStream().use { output ->
-                    val bytesWritten = input.copyTo(output)
-                    onLog("✅ Copiados $bytesWritten bytes")
+            try {
+                // Verificar si el directorio padre existe
+                val parentDir = torExecutable.parentFile
+                if (parentDir == null || !parentDir.exists()) {
+                    onLog("❌ Directorio padre no existe o es nulo")
+                    continue
                 }
+                
+                onLog("✅ Directorio padre existe")
+                
+                // Si el archivo ya existe, eliminarlo para forzar reextracción
+                if (torExecutable.exists()) {
+                    onLog("🗑️ Archivo existente encontrado, eliminando...")
+                    torExecutable.delete()
+                }
+                
+                // Extraer desde assets
+                onLog("📥 Copiando binario desde assets...")
+                context.assets.open(binaryName).use { input ->
+                    torExecutable.outputStream().use { output ->
+                        val bytesWritten = input.copyTo(output)
+                        onLog("✅ Copiados $bytesWritten bytes")
+                    }
+                }
+                
+                onLog("📊 Tamaño del archivo: ${torExecutable.length()} bytes")
+                
+                if (torExecutable.length() == 0L) {
+                    onLog("❌ El archivo está vacío después de copiar")
+                    continue
+                }
+                
+                // Intentar múltiples métodos para establecer permisos
+                onLog("🔐 Intentando establecer permisos de ejecución...")
+                
+                // Método 1: setExecutable()
+                val setExecResult = torExecutable.setExecutable(true, false)
+                onLog("  Método 1 - setExecutable(true, false): $setExecResult")
+                
+                // Método 2: setReadable, setWritable, setExecutable
+                val setReadResult = torExecutable.setReadable(true, false)
+                val setWriteResult = torExecutable.setWritable(true, false)
+                val setExecResult2 = torExecutable.setExecutable(true, false)
+                onLog("  Método 2 - setReadable: $setReadResult, setWritable: $setWriteResult, setExecutable: $setExecResult2")
+                
+                // Método 3: chmod 777
+                try {
+                    val chmod777 = Runtime.getRuntime().exec("chmod 777 ${torExecutable.absolutePath}")
+                    val chmod777Result = chmod777.waitFor()
+                    onLog("  Método 3 - chmod 777: exitCode=$chmod777Result")
+                } catch (e: Exception) {
+                    onLog("  Método 3 - chmod 777: falló (${e.message})")
+                }
+                
+                // Método 4: chmod 755
+                try {
+                    val chmod755 = Runtime.getRuntime().exec("chmod 755 ${torExecutable.absolutePath}")
+                    val chmod755Result = chmod755.waitFor()
+                    onLog("  Método 4 - chmod 755: exitCode=$chmod755Result")
+                } catch (e: Exception) {
+                    onLog("  Método 4 - chmod 755: falló (${e.message})")
+                }
+                
+                // Método 5: chmod 700
+                try {
+                    val chmod700 = Runtime.getRuntime().exec("chmod 700 ${torExecutable.absolutePath}")
+                    val chmod700Result = chmod700.waitFor()
+                    onLog("  Método 5 - chmod 700: exitCode=$chmod700Result")
+                } catch (e: Exception) {
+                    onLog("  Método 5 - chmod 700: falló (${e.message})")
+                }
+                
+                // Verificar permisos finales
+                onLog("📋 Verificación de permisos:")
+                onLog("  ¿Es ejecutable?: ${torExecutable.canExecute()}")
+                onLog("  ¿Es legible?: ${torExecutable.canRead()}")
+                onLog("  ¿Es escribible?: ${torExecutable.canWrite()}")
+                
+                // Intentar ejecutar un comando de prueba
+                onLog("🧪 Probando ejecución del binario...")
+                try {
+                    val testProcess = ProcessBuilder(torExecutable.absolutePath, "--version")
+                        .redirectErrorStream(true)
+                        .start()
+                    
+                    val output = testProcess.inputStream.bufferedReader().readText()
+                    val exitCode = testProcess.waitFor()
+                    
+                    if (exitCode == 0) {
+                        onLog("✅ ¡ÉXITO! El binario es ejecutable en esta ubicación")
+                        onLog("📄 Salida del binario: ${output.take(200)}")
+                        successfulLocation = torExecutable
+                        break
+                    } else {
+                        onLog("❌ El binario se ejecutó pero falló con código: $exitCode")
+                        onLog("📄 Salida: ${output.take(200)}")
+                    }
+                } catch (e: Exception) {
+                    onLog("❌ Error al intentar ejecutar: ${e.javaClass.simpleName}: ${e.message}")
+                    
+                    // Si es un error de permisos específico
+                    if (e.message?.contains("Permission denied") == true || 
+                        e.message?.contains("EACCES") == true) {
+                        onLog("🔒 Error de permisos confirmado en esta ubicación")
+                    }
+                }
+                
+            } catch (e: Exception) {
+                onLog("❌ Error general en esta ubicación: ${e.message}")
+                onLog("📋 ${e.stackTraceToString().take(300)}")
             }
-            
-            onLog("📊 Tamaño del archivo copiado: ${torExecutable.length()} bytes")
-            
-            // Establecer permisos de ejecución
-            val success = torExecutable.setExecutable(true, false)
-            onLog("🔐 Permisos de ejecución establecidos: $success")
-            onLog("✅ ¿Es ejecutable ahora?: ${torExecutable.canExecute()}")
-            
-        } catch (e: Exception) {
-            onLog("❌ Error al extraer binario desde assets: ${e.message}")
-            onLog("📋 Stack trace: ${e.stackTraceToString()}")
         }
         
-        return torExecutable
+        onLog("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        
+        if (successfulLocation != null) {
+            onLog("🎉 UBICACIÓN EXITOSA ENCONTRADA:")
+            onLog("📍 ${successfulLocation.absolutePath}")
+            return successfulLocation
+        } else {
+            onLog("❌ NINGUNA UBICACIÓN FUNCIONÓ")
+            onLog("💡 Puede ser una restricción de SELinux del dispositivo")
+            onLog("💡 Considera usar una librería como Tor-Android de Guardian Project")
+            // Retornar el primero aunque no funcione para que continúe el flujo
+            return possibleLocations[0].second
+        }
     }
 
     private fun getTorDataDir(onLog: (String) -> Unit): File {
@@ -108,32 +204,9 @@ class TorProcessManager(private val context: Context) {
 
         // Verificación de permisos de ejecución
         if (!torExecutable.canExecute()) {
-            onLog("⚠️ ADVERTENCIA: El binario no tiene permisos de ejecución")
-            
-            try {
-                val success = torExecutable.setExecutable(true, false)
-                if (success) {
-                    onLog("✅ Permisos de ejecución establecidos correctamente")
-                } else {
-                    onLog("❌ No se pudieron establecer permisos de ejecución con setExecutable()")
-                }
-                
-                // Fallback: intentar con chmod
-                if (!torExecutable.canExecute()) {
-                    onLog("🔧 Intentando chmod como fallback...")
-                    val chmodProcess = Runtime.getRuntime().exec("chmod 700 ${torExecutable.absolutePath}")
-                    val chmodResult = chmodProcess.waitFor()
-                    onLog("chmod resultado: $chmodResult")
-                }
-            } catch (e: Exception) {
-                onLog("❌ Error al establecer permisos: ${e.message}")
-            }
-            
-            // Verificación final
-            if (!torExecutable.canExecute()) {
-                onLog("❌ El binario no es ejecutable después de intentar establecer permisos")
-                return
-            }
+            onLog("❌ FALLO FINAL: El binario no es ejecutable")
+            onLog("🔒 Esto probablemente se debe a políticas de SELinux")
+            return
         }
 
         // Construcción del comando
