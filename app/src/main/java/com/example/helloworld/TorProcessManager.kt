@@ -314,7 +314,7 @@ class TorProcessManager(private val context: Context) {
 
     fun startTor(onLog: (String) -> Unit, onReady: () -> Unit) {
         onLog("🚀 DIAGNÓSTICO COMPLETO DE TOR")
-        onLog("=" * 50)
+        onLog("==================================================")
         onLog("")
         
         val torExecutable = getTorExecutableFile(onLog)
@@ -339,9 +339,9 @@ class TorProcessManager(private val context: Context) {
         )
 
         onLog("")
-        onLog("=" * 50)
+        onLog("==================================================")
         onLog("🚀 INICIANDO TOR")
-        onLog("=" * 50)
+        onLog("==================================================")
         onLog("📍 Ejecutable: ${torExecutable.absolutePath}")
         onLog("📂 Data dir: ${torDataDir.absolutePath}")
         onLog("⚙️ Comando: ${command.joinToString(" ")}")
