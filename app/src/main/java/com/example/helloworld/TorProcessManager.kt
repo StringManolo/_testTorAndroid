@@ -12,35 +12,68 @@ class TorProcessManager(private val context: Context) {
     val torControlPort = 9051
 
     private fun getTorExecutableFile(onLog: (String) -> Unit): File {
-        val libDir = context.applicationInfo.nativeLibraryDir
+        // Detectar la arquitectura correcta
+        val abi = Build.SUPPORTED_ABIS[0]
+        onLog("📱 ABI del dispositivo: $abi")
         
-        // Logs detallados para debugging
-        onLog("📁 Directorio de librerías nativas: $libDir")
-        onLog("📱 ABI principal del dispositivo: ${Build.SUPPORTED_ABIS[0]}")
-        
-        // Lista TODOS los archivos en el directorio nativo
-        val filesInDir = File(libDir).listFiles()
-        if (filesInDir != null && filesInDir.isNotEmpty()) {
-            onLog("📂 Archivos encontrados en el directorio nativo:")
-            filesInDir.forEach { file ->
-                onLog("  📄 ${file.name} - Ejecutable: ${file.canExecute()}, Tamaño: ${file.length()} bytes")
+        val binaryName = when (abi) {
+            "arm64-v8a" -> "tor-arm64-v8a"
+            "armeabi-v7a" -> "tor-armeabi-v7a"
+            else -> {
+                onLog("⚠️ ABI no soportada: $abi, intentando con arm64-v8a")
+                "tor-arm64-v8a"
             }
-        } else {
-            onLog("⚠️ El directorio nativo está vacío o no es accesible")
         }
         
-        // Buscar libtor.so
-        val torBinary = File(libDir, "libtor.so")
-        onLog("🎯 Buscando binario en: ${torBinary.absolutePath}")
-        onLog("✅ ¿Existe el archivo?: ${torBinary.exists()}")
+        onLog("📦 Nombre del binario en assets: $binaryName")
         
-        if (torBinary.exists()) {
-            onLog("📊 Tamaño del archivo: ${torBinary.length()} bytes")
-            onLog("🔐 ¿Es ejecutable?: ${torBinary.canExecute()}")
-            onLog("📖 ¿Es legible?: ${torBinary.canRead()}")
+        // Archivo destino en el directorio de archivos de la app
+        val torExecutable = File(context.filesDir, "tor")
+        
+        onLog("🎯 Ruta de destino: ${torExecutable.absolutePath}")
+        
+        // Verificar si ya existe y es válido
+        if (torExecutable.exists()) {
+            onLog("📄 Binario ya existe, tamaño: ${torExecutable.length()} bytes")
+            if (torExecutable.length() > 0) {
+                onLog("✅ Usando binario existente")
+                return torExecutable
+            } else {
+                onLog("⚠️ Binario existente está vacío, reextrayendo...")
+                torExecutable.delete()
+            }
         }
         
-        return torBinary
+        // Extraer desde assets
+        try {
+            onLog("📂 Listando archivos en assets/:")
+            val assetsList = context.assets.list("") ?: emptyArray()
+            assetsList.forEach { asset ->
+                onLog("  📄 $asset")
+            }
+            
+            onLog("🔄 Copiando $binaryName desde assets...")
+            
+            context.assets.open(binaryName).use { input ->
+                torExecutable.outputStream().use { output ->
+                    val bytesWritten = input.copyTo(output)
+                    onLog("✅ Copiados $bytesWritten bytes")
+                }
+            }
+            
+            onLog("📊 Tamaño del archivo copiado: ${torExecutable.length()} bytes")
+            
+            // Establecer permisos de ejecución
+            val success = torExecutable.setExecutable(true, false)
+            onLog("🔐 Permisos de ejecución establecidos: $success")
+            onLog("✅ ¿Es ejecutable ahora?: ${torExecutable.canExecute()}")
+            
+        } catch (e: Exception) {
+            onLog("❌ Error al extraer binario desde assets: ${e.message}")
+            onLog("📋 Stack trace: ${e.stackTraceToString()}")
+        }
+        
+        return torExecutable
     }
 
     private fun getTorDataDir(onLog: (String) -> Unit): File {
@@ -54,19 +87,27 @@ class TorProcessManager(private val context: Context) {
 
     fun startTor(onLog: (String) -> Unit, onReady: () -> Unit) {
 
+        onLog("🚀 Iniciando proceso de configuración de Tor...")
+        
         val torExecutable = getTorExecutableFile(onLog)
         val torDataDir = getTorDataDir(onLog)
 
         // Verificación de existencia
         if (!torExecutable.exists()) {
-            onLog("❌ Error crítico: Binario 'libtor.so' no encontrado en: ${torExecutable.absolutePath}")
-            onLog("💡 Verifica que el archivo esté en jniLibs/arm64-v8a/ y jniLibs/armeabi-v7a/")
+            onLog("❌ Error crítico: Binario Tor no encontrado en: ${torExecutable.absolutePath}")
+            onLog("💡 Verifica que el archivo esté en app/src/main/assets/")
+            return
+        }
+
+        // Verificar tamaño del archivo
+        if (torExecutable.length() == 0L) {
+            onLog("❌ Error crítico: El binario Tor está vacío (0 bytes)")
             return
         }
 
         // Verificación de permisos de ejecución
         if (!torExecutable.canExecute()) {
-            onLog("⚠️ ADVERTENCIA: 'libtor.so' no tiene permisos de ejecución")
+            onLog("⚠️ ADVERTENCIA: El binario no tiene permisos de ejecución")
             
             try {
                 val success = torExecutable.setExecutable(true, false)
@@ -103,12 +144,13 @@ class TorProcessManager(private val context: Context) {
             "__DisablePredictedCircuits", "1"
         )
 
-        onLog("🚀 Iniciando Tor...")
+        onLog("=" * 50)
         onLog("📍 Ejecutable: ${torExecutable.absolutePath}")
         onLog("📂 Directorio de datos: ${torDataDir.absolutePath}")
         onLog("🔌 Puerto SOCKS: $torSocksPort")
         onLog("🎛️ Puerto de control: $torControlPort")
-        onLog("⚙️ Comando completo: ${command.joinToString(" ")}")
+        onLog("⚙️ Comando: ${command.joinToString(" ")}")
+        onLog("=" * 50)
 
         try {
             val processBuilder = ProcessBuilder(command)
