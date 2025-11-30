@@ -25,6 +25,7 @@ class TorProcessManager(private val context: Context) {
     private external fun startTorNative(torPath: String, args: Array<String>): Int
     private external fun stopTorNative()
     private external fun readOutputNative(fd: Int): String
+    private external fun isProcessAlive(): Boolean
     
     // Interface para el callback
     interface LogCallback {
@@ -149,6 +150,11 @@ class TorProcessManager(private val context: Context) {
                 
                 onLog("📖 Thread de lectura iniciado")
                 
+                // Verificar si el proceso está vivo al inicio
+                Thread.sleep(1000)
+                val alive = isProcessAlive()
+                onLog("🔍 Proceso Tor vivo: $alive")
+                
                 try {
                     while (isRunning) {
                         val output = readOutputNative(torOutputFd)
@@ -170,6 +176,12 @@ class TorProcessManager(private val context: Context) {
                             }
                         } else {
                             consecutiveEmpty++
+                            
+                            // Cada 5 segundos verificar si el proceso sigue vivo
+                            if (consecutiveEmpty % 50 == 0) {
+                                val stillAlive = isProcessAlive()
+                                onLog("🔍 Verificación proceso (${consecutiveEmpty/10}s): $stillAlive")
+                            }
                             
                             // Si no hay salida por 30 segundos, avisar
                             if (consecutiveEmpty == 300) {

@@ -42,6 +42,28 @@ void logToJava(const char* message) {
     }
 }
 
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_example_helloworld_TorProcessManager_isProcessAlive(
+        JNIEnv* env,
+        jobject /* this */) {
+    
+    if (tor_pid <= 0) {
+        return JNI_FALSE;
+    }
+    
+    // Enviar señal 0 para verificar si el proceso existe
+    int result = kill(tor_pid, 0);
+    
+    if (result == 0) {
+        return JNI_TRUE; // Proceso existe
+    } else {
+        char log_msg[256];
+        snprintf(log_msg, sizeof(log_msg), "[C++] ⚠️ Proceso no responde: %s", strerror(errno));
+        logToJava(log_msg);
+        return JNI_FALSE;
+    }
+}
+
 extern "C" JNIEXPORT void JNICALL
 Java_com_example_helloworld_TorProcessManager_setLogCallback(
         JNIEnv* env,
@@ -115,6 +137,10 @@ Java_com_example_helloworld_TorProcessManager_startTorNative(
         return -1;
     }
     
+    // Hacer el extremo de lectura no bloqueante desde el principio
+    int flags = fcntl(pipefd[0], F_GETFL, 0);
+    fcntl(pipefd[0], F_SETFL, flags | O_NONBLOCK);
+    
     logToJava("[C++] ✅ Pipe creado correctamente");
 
     // Fork para ejecutar Tor
@@ -174,6 +200,29 @@ Java_com_example_helloworld_TorProcessManager_startTorNative(
     snprintf(log_msg, sizeof(log_msg), "[C++] ✅ Tor iniciado con PID: %d", pid);
     logToJava(log_msg);
     LOGD("Tor iniciado con PID: %d", pid);
+    
+    // Esperar un poco y verificar si el proceso sigue vivo
+    usleep(500000); // Esperar 500ms
+    
+    int status;
+    pid_t result = waitpid(pid, &status, WNOHANG);
+    
+    if (result == 0) {
+        // Proceso sigue vivo
+        logToJava("[C++] ✅ Proceso sigue activo después de 500ms");
+    } else if (result == pid) {
+        // Proceso terminó
+        if (WIFEXITED(status)) {
+            snprintf(log_msg, sizeof(log_msg), "[C++] ❌ Proceso terminó con código: %d", WEXITSTATUS(status));
+            logToJava(log_msg);
+        } else if (WIFSIGNALED(status)) {
+            snprintf(log_msg, sizeof(log_msg), "[C++] ❌ Proceso terminado por señal: %d", WTERMSIG(status));
+            logToJava(log_msg);
+        }
+    } else {
+        snprintf(log_msg, sizeof(log_msg), "[C++] ⚠️ Error en waitpid: %s", strerror(errno));
+        logToJava(log_msg);
+    }
     
     env->ReleaseStringUTFChars(torPath, tor_path);
     
