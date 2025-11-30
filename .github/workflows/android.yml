@@ -24,16 +24,16 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
       
-      - name: 🔧 Setup Android NDK
-        uses: nttld/setup-ndk@v1
-        with:
-          ndk-version: r25c
-          add-to-path: true
+      # *** CAMBIADO: Setup Android SDK primero ***
+      - name: 🔧 Setup Android SDK
+        uses: android-actions/setup-android@v3
       
-      - name: 🛠️ Configure NDK Environment
+      # *** CAMBIADO: Instalar CMake y NDK con sdkmanager ***
+      - name: 📦 Install CMake and NDK
         run: |
-          echo "ANDROID_NDK_HOME=$ANDROID_NDK_ROOT" >> $GITHUB_ENV
-          echo "ANDROID_NDK_ROOT=$ANDROID_NDK_ROOT" >> $GITHUB_ENV
+          echo "y" | sdkmanager "ndk;25.2.9519653" "cmake;3.18.1"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/25.2.9519653" >> $GITHUB_ENV
+          echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/25.2.9519653" >> $GITHUB_ENV
       
       - name: 🐘 Setup Gradle
         uses: gradle/actions/setup-gradle@v4
