@@ -10,8 +10,59 @@
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
-// Variable global para almacenar el PID de Tor
+// Variables globales
 static pid_t tor_pid = -1;
+static JavaVM* g_jvm = nullptr;
+static jobject g_callback_obj = nullptr;
+static jmethodID g_callback_method = nullptr;
+
+// Función helper para enviar logs a Java
+void logToJava(const char* message) {
+    if (g_jvm == nullptr || g_callback_obj == nullptr || g_callback_method == nullptr) {
+        return;
+    }
+    
+    JNIEnv* env;
+    bool detach = false;
+    
+    int status = g_jvm->GetEnv((void**)&env, JNI_VERSION_1_6);
+    if (status == JNI_EDETACHED) {
+        g_jvm->AttachCurrentThread(&env, nullptr);
+        detach = true;
+    }
+    
+    if (env != nullptr) {
+        jstring jmsg = env->NewStringUTF(message);
+        env->CallVoidMethod(g_callback_obj, g_callback_method, jmsg);
+        env->DeleteLocalRef(jmsg);
+        
+        if (detach) {
+            g_jvm->DetachCurrentThread();
+        }
+    }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_example_helloworld_TorProcessManager_setLogCallback(
+        JNIEnv* env,
+        jobject thiz,
+        jobject callback) {
+    
+    // Guardar la JavaVM para poder hacer llamadas desde otros threads
+    env->GetJavaVM(&g_jvm);
+    
+    // Guardar el objeto callback como referencia global
+    if (g_callback_obj != nullptr) {
+        env->DeleteGlobalRef(g_callback_obj);
+    }
+    g_callback_obj = env->NewGlobalRef(callback);
+    
+    // Obtener el método onLog
+    jclass callbackClass = env->GetObjectClass(callback);
+    g_callback_method = env->GetMethodID(callbackClass, "onLog", "(Ljava/lang/String;)V");
+    
+    LOGD("Callback de logs configurado");
+}
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_example_helloworld_TorProcessManager_startTorNative(
@@ -22,6 +73,12 @@ Java_com_example_helloworld_TorProcessManager_startTorNative(
 
     const char* tor_path = env->GetStringUTFChars(torPath, nullptr);
     
+    logToJava("[C++] 🔧 Iniciando Tor desde JNI...");
+    
+    char log_msg[512];
+    snprintf(log_msg, sizeof(log_msg), "[C++] 📍 Ruta del binario: %s", tor_path);
+    logToJava(log_msg);
+    
     LOGD("Iniciando Tor con execve desde JNI...");
     LOGD("Ruta del binario: %s", tor_path);
 
@@ -31,10 +88,18 @@ Java_com_example_helloworld_TorProcessManager_startTorNative(
     
     argv[0] = strdup(tor_path); // Primer argumento es el nombre del programa
     
+    logToJava("[C++] ⚙️ Argumentos de Tor:");
+    snprintf(log_msg, sizeof(log_msg), "[C++]   argv[0] = %s", tor_path);
+    logToJava(log_msg);
+    
     for (int i = 0; i < argc; i++) {
         jstring jarg = (jstring) env->GetObjectArrayElement(args, i);
         const char* arg = env->GetStringUTFChars(jarg, nullptr);
         argv[i + 1] = strdup(arg);
+        
+        snprintf(log_msg, sizeof(log_msg), "[C++]   argv[%d] = %s", i + 1, arg);
+        logToJava(log_msg);
+        
         LOGD("Argumento %d: %s", i, arg);
         env->ReleaseStringUTFChars(jarg, arg);
     }
@@ -43,15 +108,22 @@ Java_com_example_helloworld_TorProcessManager_startTorNative(
     // Crear pipe para capturar la salida
     int pipefd[2];
     if (pipe(pipefd) == -1) {
+        snprintf(log_msg, sizeof(log_msg), "[C++] ❌ Error creando pipe: %s", strerror(errno));
+        logToJava(log_msg);
         LOGE("Error creando pipe: %s", strerror(errno));
         env->ReleaseStringUTFChars(torPath, tor_path);
         return -1;
     }
+    
+    logToJava("[C++] ✅ Pipe creado correctamente");
 
     // Fork para ejecutar Tor
+    logToJava("[C++] 🔀 Llamando a fork()...");
     pid_t pid = fork();
     
     if (pid == -1) {
+        snprintf(log_msg, sizeof(log_msg), "[C++] ❌ Error en fork: %s", strerror(errno));
+        logToJava(log_msg);
         LOGE("Error en fork: %s", strerror(errno));
         env->ReleaseStringUTFChars(torPath, tor_path);
         return -1;
@@ -60,17 +132,37 @@ Java_com_example_helloworld_TorProcessManager_startTorNative(
     if (pid == 0) {
         // Proceso hijo
         
+        logToJava("[C++] 👶 Proceso hijo iniciado");
+        
         // Redirigir stdout y stderr al pipe
         close(pipefd[0]); // Cerrar extremo de lectura
-        dup2(pipefd[1], STDOUT_FILENO);
-        dup2(pipefd[1], STDERR_FILENO);
+        
+        if (dup2(pipefd[1], STDOUT_FILENO) == -1) {
+            snprintf(log_msg, sizeof(log_msg), "[C++] ❌ Error en dup2 STDOUT: %s", strerror(errno));
+            logToJava(log_msg);
+            LOGE("Error en dup2 STDOUT: %s", strerror(errno));
+            _exit(1);
+        }
+        
+        if (dup2(pipefd[1], STDERR_FILENO) == -1) {
+            snprintf(log_msg, sizeof(log_msg), "[C++] ❌ Error en dup2 STDERR: %s", strerror(errno));
+            logToJava(log_msg);
+            LOGE("Error en dup2 STDERR: %s", strerror(errno));
+            _exit(1);
+        }
+        
         close(pipefd[1]);
         
-        // Ejecutar Tor con execve
-        LOGD("Ejecutando execve...");
+        logToJava("[C++] ✅ Redireccionamiento de salida completado");
+        logToJava("[C++] ⚡ Llamando a execve...");
+        
+        LOGD("Redireccionamiento de salida completado");
+        LOGD("Llamando a execve...");
         execve(tor_path, argv.data(), nullptr);
         
         // Si llegamos aquí, execve falló
+        snprintf(log_msg, sizeof(log_msg), "[C++] ❌ execve falló: %s", strerror(errno));
+        logToJava(log_msg);
         LOGE("execve falló: %s", strerror(errno));
         _exit(1);
     }
@@ -79,6 +171,8 @@ Java_com_example_helloworld_TorProcessManager_startTorNative(
     close(pipefd[1]); // Cerrar extremo de escritura
     tor_pid = pid;
     
+    snprintf(log_msg, sizeof(log_msg), "[C++] ✅ Tor iniciado con PID: %d", pid);
+    logToJava(log_msg);
     LOGD("Tor iniciado con PID: %d", pid);
     
     env->ReleaseStringUTFChars(torPath, tor_path);
@@ -118,12 +212,19 @@ Java_com_example_helloworld_TorProcessManager_readOutputNative(
         jobject /* this */,
         jint fd) {
     
-    char buffer[4096];
+    // Hacer el read no bloqueante
+    int flags = fcntl(fd, F_GETFL, 0);
+    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    
+    char buffer[8192];
     ssize_t bytes_read = read(fd, buffer, sizeof(buffer) - 1);
     
     if (bytes_read > 0) {
         buffer[bytes_read] = '\0';
         return env->NewStringUTF(buffer);
+    } else if (bytes_read == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+        // No hay datos disponibles, no es un error
+        return env->NewStringUTF("");
     }
     
     return env->NewStringUTF("");

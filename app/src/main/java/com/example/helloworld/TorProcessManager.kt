@@ -21,9 +21,15 @@ class TorProcessManager(private val context: Context) {
     }
 
     // Métodos nativos
+    private external fun setLogCallback(callback: LogCallback)
     private external fun startTorNative(torPath: String, args: Array<String>): Int
     private external fun stopTorNative()
     private external fun readOutputNative(fd: Int): String
+    
+    // Interface para el callback
+    interface LogCallback {
+        fun onLog(message: String)
+    }
 
     private fun getTorExecutableFile(onLog: (String) -> Unit): File {
         onLog("📱 Información del dispositivo:")
@@ -89,6 +95,14 @@ class TorProcessManager(private val context: Context) {
         onLog("⚡ Usando execve desde código nativo (bypass SELinux)")
         onLog("")
         
+        // Configurar callback para logs desde C++
+        val logCallback = object : LogCallback {
+            override fun onLog(message: String) {
+                onLog(message)
+            }
+        }
+        setLogCallback(logCallback)
+        
         val torExecutable = getTorExecutableFile(onLog)
         val torDataDir = getTorDataDir(onLog)
 
@@ -131,12 +145,16 @@ class TorProcessManager(private val context: Context) {
             // Thread para leer la salida de Tor
             readerThread = Thread {
                 var isReady = false
+                var consecutiveEmpty = 0
+                
+                onLog("📖 Thread de lectura iniciado")
                 
                 try {
                     while (isRunning) {
                         val output = readOutputNative(torOutputFd)
                         
                         if (output.isNotEmpty()) {
+                            consecutiveEmpty = 0
                             val lines = output.split("\n")
                             for (line in lines) {
                                 if (line.isNotBlank()) {
@@ -150,12 +168,21 @@ class TorProcessManager(private val context: Context) {
                                     }
                                 }
                             }
+                        } else {
+                            consecutiveEmpty++
+                            
+                            // Si no hay salida por 30 segundos, avisar
+                            if (consecutiveEmpty == 300) {
+                                onLog("⚠️ No se ha recibido salida de Tor en 30 segundos")
+                                onLog("💡 El proceso puede estar bloqueado o sin salida")
+                            }
                         }
                         
-                        Thread.sleep(100) // Pequeña pausa para no saturar la CPU
+                        Thread.sleep(100) // Leer cada 100ms
                     }
                 } catch (e: Exception) {
                     onLog("❌ Error leyendo salida de Tor: ${e.message}")
+                    onLog("📋 ${e.stackTraceToString()}")
                 } finally {
                     onLog("⏹️ Thread de lectura terminado")
                 }
