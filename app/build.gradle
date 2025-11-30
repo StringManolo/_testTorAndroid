@@ -6,17 +6,36 @@ plugins {
 android {
   namespace 'com.example.helloworld'
   compileSdk 34
-
+  
   defaultConfig {
     applicationId "com.example.helloworld"
     minSdk 24
     targetSdk 34
     versionCode 1
     versionName "1.0.0"
-
     testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+    
+    // *** CONFIGURACIÓN NDK ***
+    externalNativeBuild {
+      cmake {
+        cppFlags "-std=c++17"
+        arguments "-DANDROID_STL=c++_shared"
+      }
+    }
+    
+    ndk {
+      abiFilters 'arm64-v8a', 'armeabi-v7a'
+    }
   }
-
+  
+  // *** CONFIGURACIÓN CMAKE ***
+  externalNativeBuild {
+    cmake {
+      path "src/main/cpp/CMakeLists.txt"
+      version "3.18.1"
+    }
+  }
+  
   signingConfigs {
     release {
       storeFile file(System.getenv("RELEASE_STORE_FILE") ?: "release.keystore")
@@ -25,6 +44,7 @@ android {
       keyPassword System.getenv("RELEASE_KEY_PASSWORD")
     }
   }
+  
   buildTypes {
     release {
       minifyEnabled true
@@ -36,24 +56,23 @@ android {
       applicationIdSuffix ".debug"
     }
   }
-
+  
   compileOptions {
     sourceCompatibility JavaVersion.VERSION_1_8
     targetCompatibility JavaVersion.VERSION_1_8
   }
-
+  
   kotlinOptions {
     jvmTarget = '1.8'
-  }                                                                                   }
+  }
+}
 
 dependencies {
   implementation 'androidx.core:core-ktx:1.12.0'
   implementation 'androidx.appcompat:appcompat:1.6.1'
   implementation 'com.google.android.material:material:1.11.0'
   implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
-  // === CAMBIO 1: AGREGAR OKHTTP PARA CONEXIÓN SOCKS ===
   implementation 'com.squareup.okhttp3:okhttp:4.12.0'
-
   testImplementation 'junit:junit:4.13.2'
   androidTestImplementation 'androidx.test.ext:junit:1.1.5'
   androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'
