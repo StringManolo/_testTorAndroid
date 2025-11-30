@@ -34,7 +34,7 @@ class TorProcessManager(private val context: Context) {
         }
     }
     
-    fun startTor() {
+    fun startTor(onReady: () -> Unit) {
         ensureBinaryExtracted()
         
         val torExecutable = getTorExecutableFile()
@@ -57,10 +57,13 @@ class TorProcessManager(private val context: Context) {
             torProcess = processBuilder.start()
             
             Thread {
+                var isReady = false
                 torProcess?.inputStream?.bufferedReader()?.forEachLine { line ->
                     Log.i("TorProcess", line)
-                    if (line.contains("Bootstrapped 100%")) {
+                    if (line.contains("Bootstrapped 100%") && !isReady) {
+                        isReady = true
                         Log.d("TorProcess", "Tor está listo y Bootstrapped")
+                        onReady()
                     }
                 }
             }.start()
