@@ -10,21 +10,20 @@ import android.widget.Toast
 import android.widget.ScrollView
 import android.graphics.Typeface
 import android.util.Log
-import android.text.method.ScrollingMovementMethod
+import android.widget.EditText
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var torManager: TorProcessManager
     private lateinit var webView: WebView
-    private lateinit var logTextView: TextView
+    private lateinit var logTextView: EditText
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         torManager = TorProcessManager(this)
 
-        // 1. Crear el TextView para logs
-        logTextView = TextView(this).apply {
+).apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 0, // 0 height initially
@@ -35,9 +34,11 @@ class MainActivity : AppCompatActivity() {
             setBackgroundColor(0xFF000000.toInt()) // Fondo negro
             setTextColor(0xFF00FF00.toInt()) // Texto verde
             
-            // *** AÑADIR ESTAS LÍNEAS PARA HACERLO SELECCIONABLE ***
-            setTextIsSelectable(true) // Permite seleccionar el texto
-            movementMethod = ScrollingMovementMethod() // Permite scroll
+            // *** HACER EL TEXTVIEW EDITABLE PARA PODER SELECCIONAR TODO ***
+            isFocusable = true
+            isFocusableInTouchMode = true
+            isClickable = true
+            isLongClickable = true
             setPadding(8, 8, 8, 8) // Padding para mejor legibilidad
         }
 
