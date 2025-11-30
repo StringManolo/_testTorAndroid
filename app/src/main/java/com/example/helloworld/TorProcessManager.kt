@@ -144,13 +144,13 @@ class TorProcessManager(private val context: Context) {
             "__DisablePredictedCircuits", "1"
         )
 
-        onLog("=" * 50)
+        onLog("==================================================")
         onLog("📍 Ejecutable: ${torExecutable.absolutePath}")
         onLog("📂 Directorio de datos: ${torDataDir.absolutePath}")
         onLog("🔌 Puerto SOCKS: $torSocksPort")
         onLog("🎛️ Puerto de control: $torControlPort")
         onLog("⚙️ Comando: ${command.joinToString(" ")}")
-        onLog("=" * 50)
+        onLog("==================================================")
 
         try {
             val processBuilder = ProcessBuilder(command)
