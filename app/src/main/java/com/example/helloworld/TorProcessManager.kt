@@ -11,23 +11,17 @@ class TorProcessManager(private val context: Context) {
     val torSocksPort = 9050
     val torControlPort = 9051
     
-    // --- NUEVO: OBTENER RUTA DEL BINARIO INSTALADO POR EL SISTEMA ---
     private fun getTorExecutableFile(): File {
-        // La ruta base donde Android copia los archivos de jniLibs
         val libDir = context.applicationInfo.nativeLibraryDir
-        // El binario debe estar aquí bajo el nombre 'tor'
-        return File(libDir, "tor") 
+        // *** CAMBIO CLAVE: Busca 'libtor.so' ***
+        return File(libDir, "libtor.so") 
     }
     
     private fun getTorDataDir(): File {
-        // El DataDir aún puede estar en filesDir
         val dataDir = File(context.filesDir, "tor_data")
         if (!dataDir.exists()) dataDir.mkdirs()
         return dataDir
     }
-
-    // Ya NO necesitamos ensureBinaryExtracted ni chmod
-    // La instalación lo maneja automáticamente.
 
     fun startTor(onLog: (String) -> Unit, onReady: () -> Unit) {
         
@@ -35,9 +29,21 @@ class TorProcessManager(private val context: Context) {
         val torDataDir = getTorDataDir()
         
         if (!torExecutable.exists()) {
-            onLog("Error crítico: Binario 'tor' no encontrado en el directorio de librerías nativas: ${torExecutable.absolutePath}")
+            onLog("Error crítico: Binario 'libtor.so' no encontrado en el directorio de librerías nativas: ${torExecutable.absolutePath}")
             return
         }
+        
+        // Comprobar que sea ejecutable (aunque el sistema lo garantiza en esta ruta)
+        if (!torExecutable.canExecute()) {
+             onLog("ADVERTENCIA: 'libtor.so' no tiene permisos de ejecución, intentando chmod.")
+             // Intento de chmod si es necesario, aunque debe ser automático aquí
+             try {
+                Runtime.getRuntime().exec("chmod 700 ${torExecutable.absolutePath}").waitFor()
+             } catch (e: Exception) {
+                onLog("Fallo en chmod de contingencia: ${e.message}")
+             }
+        }
+
 
         val command = listOf(
             torExecutable.absolutePath,
@@ -56,7 +62,6 @@ class TorProcessManager(private val context: Context) {
             torProcess = processBuilder.start()
             onLog("Proceso Tor iniciado.")
             
-            // ... (Resto del hilo de lectura de logs, sin cambios)
             Thread {
                 var isReady = false
                 val reader = torProcess?.inputStream?.bufferedReader()
@@ -79,7 +84,7 @@ class TorProcessManager(private val context: Context) {
             }.start()
             
         } catch (e: Exception) {
-            onLog("Excepción al iniciar Tor. Fallo grave en el entorno: ${e.message}")
+            onLog("Excepción al iniciar Tor. Error: ${e.message}")
         }
     }
     
