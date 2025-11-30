@@ -34,7 +34,7 @@ class TorProcessManager(private val context: Context) {
         }
     }
     
-    fun startTor(onReady: () -> Unit) {
+    fun startTor(onLog: (String) -> Unit, onReady: () -> Unit) {
         ensureBinaryExtracted()
         
         val torExecutable = getTorExecutableFile()
@@ -58,18 +58,34 @@ class TorProcessManager(private val context: Context) {
             
             Thread {
                 var isReady = false
-                torProcess?.inputStream?.bufferedReader()?.forEachLine { line ->
-                    Log.i("TorProcess", line)
-                    if (line.contains("Bootstrapped 100%") && !isReady) {
-                        isReady = true
-                        Log.d("TorProcess", "Tor está listo y Bootstrapped")
-                        onReady()
+                val reader = torProcess?.inputStream?.bufferedReader()
+                if (reader == null) {
+                    onLog("Error: No se pudo obtener el InputStream del proceso.")
+                    return@Thread
+                }
+                
+                try {
+                    reader.forEachLine { line ->
+                        // 1. Ejecuta el callback para actualizar la UI
+                        onLog(line)
+                        
+                        // 2. Continúa con la lógica de detección de listo
+                        if (line.contains("Bootstrapped 100%") && !isReady) {
+                            isReady = true
+                            Log.d("TorProcess", "Tor está listo y Bootstrapped")
+                            onReady()
+                        }
                     }
+                } catch (e: Exception) {
+                    onLog("Error leyendo el stream de Tor: ${e.message}")
+                } finally {
+                    val exitCode = torProcess?.waitFor()
+                    onLog("El proceso de Tor ha terminado con código de salida: $exitCode")
                 }
             }.start()
             
         } catch (e: Exception) {
-            Log.e("TorProcessManager", "Fallo al iniciar el proceso de Tor", e)
+            onLog("Excepción al iniciar el binario: ${e.message}")
         }
     }
     
