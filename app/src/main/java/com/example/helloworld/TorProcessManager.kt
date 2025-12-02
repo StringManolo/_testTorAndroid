@@ -4,11 +4,14 @@ import android.content.Context
 import android.os.Build
 import java.io.File
 
-class TorProcessManager(private val context: Context) {
+class TorProcessManager private constructor(private val context: Context) {
 
     private var torOutputFd: Int = -1
     private var readerThread: Thread? = null
-    private var isRunning = false
+
+    @Volatile
+    var isRunning = false
+        private set
 
     val torSocksPort = 9050
     val torControlPort = 9051
@@ -16,6 +19,15 @@ class TorProcessManager(private val context: Context) {
     companion object {
         init {
             System.loadLibrary("torwrapper")
+        }
+
+        @Volatile
+        private var INSTANCE: TorProcessManager? = null
+
+        fun getInstance(context: Context): TorProcessManager {
+            return INSTANCE ?: synchronized(this) {
+                INSTANCE ?: TorProcessManager(context.applicationContext).also { INSTANCE = it }
+            }
         }
     }
 
@@ -30,12 +42,9 @@ class TorProcessManager(private val context: Context) {
     }
 
     private fun getTorExecutableFile(onLog: (String) -> Unit): File {
-        onLog("📱 Información del dispositivo:")
-        onLog("  Modelo: ${Build.MODEL}")
-        onLog("  Fabricante: ${Build.MANUFACTURER}")
-        onLog("  Android: ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})")
+        onLog("📱 Device Info:")
+        onLog("  Model: ${Build.MODEL}")
         onLog("  ABI: ${Build.SUPPORTED_ABIS.joinToString(", ")}")
-        onLog("")
 
         val abi = Build.SUPPORTED_ABIS[0]
         val binaryName = when {
@@ -44,35 +53,23 @@ class TorProcessManager(private val context: Context) {
             else -> "tor-arm64-v8a"
         }
 
-        onLog("📦 Binario a usar: $binaryName")
-
         val torExecutable = File(context.filesDir, "tor")
 
         if (!torExecutable.exists() || torExecutable.length() == 0L) {
-            onLog("📥 Extrayendo binario desde assets...")
-
+            onLog("📥 Extracting binary...")
             try {
                 context.assets.open(binaryName).use { input ->
                     torExecutable.outputStream().use { output ->
-                        val bytesWritten = input.copyTo(output)
-                        onLog("✅ Copiados $bytesWritten bytes")
+                        input.copyTo(output)
                     }
                 }
-
                 torExecutable.setExecutable(true, false)
                 torExecutable.setReadable(true, false)
-
-                onLog("✅ Binario extraído: ${torExecutable.absolutePath}")
-                onLog("📊 Tamaño: ${torExecutable.length()} bytes")
-
+                onLog("✅ Binary extracted")
             } catch (e: Exception) {
-                onLog("❌ Error extrayendo binario: ${e.message}")
+                onLog("❌ Error extracting: ${e.message}")
             }
-        } else {
-            onLog("✅ Binario ya existe: ${torExecutable.absolutePath}")
-            onLog("📊 Tamaño: ${torExecutable.length()} bytes")
         }
-
         return torExecutable
     }
 
@@ -80,16 +77,21 @@ class TorProcessManager(private val context: Context) {
         val dataDir = File(context.filesDir, "tor_data")
         if (!dataDir.exists()) {
             dataDir.mkdirs()
-            onLog("📁 Directorio de datos Tor creado: ${dataDir.absolutePath}")
         }
         return dataDir
     }
 
     fun startTor(onLog: (String) -> Unit, onReady: () -> Unit) {
-        onLog("🚀 INICIANDO TOR CON JNI")
-        onLog("==================================================")
-        onLog("⚡ Usando execve/fexecve desde código nativo")
-        onLog("")
+        if (isRunning) {
+            onLog("⚠️ Tor is already running (Singleton).")
+            if (isProcessAlive()) {
+                onLog("✅ Process is alive. Triggering onReady.")
+                onReady()
+            }
+            return
+        }
+
+        onLog("🚀 STARTING TOR")
 
         val logCallback = object : LogCallback {
             override fun onLog(message: String) {
@@ -102,7 +104,7 @@ class TorProcessManager(private val context: Context) {
         val torDataDir = getTorDataDir(onLog)
 
         if (!torExecutable.exists()) {
-            onLog("❌ Error: Binario no encontrado")
+            onLog("❌ Binary not found")
             return
         }
 
@@ -113,35 +115,20 @@ class TorProcessManager(private val context: Context) {
             "--__DisablePredictedCircuits", "1"
         )
 
-        onLog("📍 Ejecutable: ${torExecutable.absolutePath}")
-        onLog("📂 Directorio de datos: ${torDataDir.absolutePath}")
-        onLog("🔌 Puerto SOCKS: $torSocksPort")
-        onLog("🎛️ Puerto de control: $torControlPort")
-        onLog("")
-
         try {
-            onLog("🔧 Llamando a código nativo JNI...")
-
             torOutputFd = startTorNative(torExecutable.absolutePath, args)
 
             if (torOutputFd < 0) {
-                onLog("❌ startTorNative devolvió error")
+                onLog("❌ startTorNative returned error")
                 return
             }
 
-            onLog("✅ Tor lanzado desde JNI")
-            onLog("📄 File descriptor salida: $torOutputFd")
             isRunning = true
-
+            
+            readerThread?.interrupt()
             readerThread = Thread {
                 var isReady = false
                 var emptyCount = 0
-
-                onLog("📖 Thread de lectura iniciado")
-
-                Thread.sleep(1000)
-                val alive = isProcessAlive()
-                onLog("🔍 Proceso Tor vivo: $alive")
 
                 try {
                     while (isRunning) {
@@ -149,57 +136,43 @@ class TorProcessManager(private val context: Context) {
 
                         if (output.isNotEmpty()) {
                             emptyCount = 0
-
                             val lines = output.split("\n")
                             for (line in lines) {
                                 if (line.isNotBlank()) {
                                     onLog(line)
-
                                     if (!isReady && line.contains("Bootstrapped 100%")) {
                                         isReady = true
-                                        onLog("🎉 Tor completamente iniciado")
                                         onReady()
                                     }
                                 }
                             }
                         } else {
                             emptyCount++
-
-                            if (emptyCount % 50 == 0) {
-                                val stillAlive = isProcessAlive()
-                                onLog("🔍 Verificación proceso (${emptyCount / 10}s): $stillAlive")
-                            }
-
                             if (emptyCount == 300) {
-                                onLog("⚠️ 30s sin salida de Tor")
+                                onLog("⚠️ No output for 30s")
                             }
                         }
-
                         Thread.sleep(100)
                     }
                 } catch (e: Exception) {
-                    onLog("❌ Error leyendo salida: ${e.message}")
-                } finally {
-                    onLog("⏹️ Thread de lectura terminado")
+                    onLog("❌ Read thread error: ${e.message}")
                 }
             }
-
             readerThread?.start()
 
         } catch (e: Exception) {
-            onLog("❌ Excepción al iniciar Tor: ${e.message}")
+            isRunning = false
+            onLog("❌ Exception starting Tor: ${e.message}")
         }
     }
 
     fun stopTor() {
-        isRunning = false
-
+        if (!isRunning) return
         try {
             stopTorNative()
         } catch (_: Exception) {}
-
+        isRunning = false
         readerThread?.interrupt()
         readerThread = null
     }
 }
-

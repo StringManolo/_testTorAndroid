@@ -23,8 +23,6 @@ static int tor_pipe_fd = -1;
 #define AT_EMPTY_PATH 0x1000
 #endif
 
-/* ===================== LOGGING ====================== */
-
 static void safeLogToJava(const char* msg) {
     if (!gJvm || !gLogCallback || !gOnLogMethod) return;
     JNIEnv* env = nullptr;
@@ -34,14 +32,10 @@ static void safeLogToJava(const char* msg) {
     env->DeleteLocalRef(jmsg);
 }
 
-/* ===================== JNI ====================== */
-
 extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void*) {
     gJvm = vm;
     return JNI_VERSION_1_6;
 }
-
-/* ===================== CALLBACK ====================== */
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_example_helloworld_TorProcessManager_setLogCallback(
@@ -55,8 +49,6 @@ Java_com_example_helloworld_TorProcessManager_setLogCallback(
 
     safeLogToJava("[C++] Log callback registered");
 }
-
-/* ===================== MEMFD EXEC ====================== */
 
 static int do_memfd_exec(const char* path, char* const argv[], char* const envp[]) {
     int fd = syscall(__NR_memfd_create, "tor_memfd", 0);
@@ -86,11 +78,22 @@ static int do_memfd_exec(const char* path, char* const argv[], char* const envp[
     return -1;
 }
 
-/* ===================== START ====================== */
-
 extern "C" JNIEXPORT jint JNICALL
 Java_com_example_helloworld_TorProcessManager_startTorNative(
         JNIEnv* env, jobject, jstring torPath, jobjectArray args) {
+
+    if (tor_pid > 0) {
+        if (kill(tor_pid, 0) == 0) {
+            safeLogToJava("[C++] Tor is already running. Reusing FD.");
+            return tor_pipe_fd;
+        } else {
+            tor_pid = -1;
+            if (tor_pipe_fd >= 0) {
+                close(tor_pipe_fd);
+                tor_pipe_fd = -1;
+            }
+        }
+    }
 
     const char* tor_path = env->GetStringUTFChars(torPath, nullptr);
     int argc = env->GetArrayLength(args);
@@ -144,8 +147,6 @@ Java_com_example_helloworld_TorProcessManager_startTorNative(
     return tor_pipe_fd;
 }
 
-/* ===================== READ ====================== */
-
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_example_helloworld_TorProcessManager_readOutputNative(
         JNIEnv* env, jobject, jint fd) {
@@ -158,8 +159,6 @@ Java_com_example_helloworld_TorProcessManager_readOutputNative(
     return env->NewStringUTF(buf);
 }
 
-/* ===================== ALIVE ====================== */
-
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_example_helloworld_TorProcessManager_isProcessAlive(
         JNIEnv*, jobject) {
@@ -169,8 +168,6 @@ Java_com_example_helloworld_TorProcessManager_isProcessAlive(
     pid_t r = waitpid(tor_pid, &status, WNOHANG);
     return (r == 0) ? JNI_TRUE : JNI_FALSE;
 }
-
-/* ===================== STOP ====================== */
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_example_helloworld_TorProcessManager_stopTorNative(
@@ -188,4 +185,3 @@ Java_com_example_helloworld_TorProcessManager_stopTorNative(
 
     safeLogToJava("[C++] Tor stopped");
 }
-
